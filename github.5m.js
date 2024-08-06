@@ -16,6 +16,7 @@
 // <xbar.var>boolean(SHOW_PULL_REQUEST_BRANCHES=true): Show Pull Request's base/head branches.</xbar.var>
 // <xbar.var>boolean(SHOW_NOTIFICATION_REASON=true): Show notification's reason.</xbar.var>
 // <xbar.var>boolean(INCLUDE_BOT_PULL_REQUESTS=false): Include Pull Requests created by bots.</xbar.var>
+// <xbar.var>boolean(SHOW_DISCUSSIONS=true): Show GitHub Discussions.</xbar.var>
 // <xbar.var>string(GITHUB_HOST=""): Your GitHub Enterprise Host. Leave blank for GitHub.com.</xbar.var>
 
 const config = {
@@ -31,6 +32,7 @@ const config = {
   showBranches: process.env["SHOW_PULL_REQUEST_BRANCHES"] === "true",
   showNotificationReason: process.env["SHOW_NOTIFICATION_REASON"] === "true",
   includeBotPullRequests: process.env["INCLUDE_BOT_PULL_REQUESTS"] === "true",
+  showDiscussions: process.env["SHOW_DISCUSSIONS"] === "true",
 };
 
 const botNames = ["renovate", "dependabot"];
@@ -93,6 +95,13 @@ const graphqlApiEndpoint =
  * @property {string} title
  * @property {string} url
  * @property {string | null} latest_comment_url
+ */
+
+/**
+ * @typedef {Object} GitHubDiscussion
+ * @property {string} title
+ * @property {string} url
+ * @property {GitHubRepository} repository
  */
 
 /**
@@ -382,6 +391,66 @@ const issuesToLines = (issues) => {
 };
 
 /**
+ * @returns {Promise<GitHubDiscussion[]>}
+ */
+const fetchDiscussions = async () => {
+  const query = `
+  query {
+    viewer {
+      repositoriesContributedTo(first: 100, includeUserRepositories: true) {
+        nodes {
+          discussions(first: 10, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes {
+              title
+              url
+              repository {
+                name
+                owner {
+                  login
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  `;
+
+  const data = await fetch(`https://${graphqlApiEndpoint}/graphql`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+    },
+    body: JSON.stringify({ query }),
+  }).then(async (resp) => {
+    const data = await resp.json();
+    if (!resp.ok) {
+      throw new Error(JSON.stringify(data));
+    }
+    return data;
+  });
+
+  return data.data.viewer.repositoriesContributedTo.nodes
+    .flatMap(repo => repo.discussions.nodes)
+    .filter(Boolean);
+};
+
+/**
+ * @param {GitHubDiscussion[]} discussions
+ * @returns {string[]}
+ */
+const discussionsToLines = (discussions) => {
+  const lines = [];
+  for (const discussion of discussions) {
+    lines.push(
+      `${escapePipe(discussion.title)} | href=${discussion.url}`
+    );
+  }
+  return lines;
+};
+
+/**
  * @param {string} conclusion
  * @returns {string | null}
  */
@@ -444,6 +513,8 @@ const conclustionToEmoji = (conclusion) => {
   const issuesAssignedLines = [];
   /** @type {string[]} */
   const notificationsLines = [];
+  /** @type {string[]} */
+  const discussionLines = [];
 
   /*
    * Review Requested
@@ -570,6 +641,34 @@ const conclustionToEmoji = (conclusion) => {
     promises.push(promise);
   }
 
+  /*
+   * Discussions
+   */
+    if (config.showDiscussions) {
+      const promise = fetchDiscussions().then((discussions) => {
+      discussionLines.push(
+        `:speech_balloon: Discussions (${discussions.length}) | color=blue href=https://${config.githubHost}/discussions`
+      );
+  
+      countsMap.discussions = discussions.length;
+      if (discussions.length === 0) {
+          discussionLines.push("No discussions");
+          discussionLines.push("---");
+          return;
+        }
+  
+      const byRepo = groupResourcesByRepo(discussions);
+      for (const [repo, discussions] of byRepo) {
+        discussionLines.push(
+          `${repo} | size=12 color=blue`,
+          ...discussionsToLines(discussions)
+        );
+      }
+      discussionLines.push("---");
+    });
+    promises.push(promise);
+  }
+
   // Wait for all promises to complete
   await Promise.all(promises);
 
@@ -583,6 +682,7 @@ const conclustionToEmoji = (conclusion) => {
   if (config.showMyPullRequests) counts.push(countsMap.mine);
   if (config.showIssuesAssigned) counts.push(countsMap.issuesAssigned);
   if (config.showNotifications) counts.push(countsMap.notifications);
+  if (config.showDiscussions) counts.push(countsMap.discussions);
 
   /** @type {string[]} */
   const menubarLines = [];
@@ -604,6 +704,7 @@ const conclustionToEmoji = (conclusion) => {
   if (config.showMyPullRequests) lines.push(...mineLines);
   if (config.showIssuesAssigned) lines.push(...issuesAssignedLines);
   if (config.showNotifications) lines.push(...notificationsLines);
+  if (config.showDiscussions) lines.push(...discussionLines);
 
   console.log(lines.join("\n"));
 })();
