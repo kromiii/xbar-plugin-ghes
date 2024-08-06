@@ -16,7 +16,7 @@
 // <xbar.var>boolean(SHOW_PULL_REQUEST_BRANCHES=true): Show Pull Request's base/head branches.</xbar.var>
 // <xbar.var>boolean(SHOW_NOTIFICATION_REASON=true): Show notification's reason.</xbar.var>
 // <xbar.var>boolean(INCLUDE_BOT_PULL_REQUESTS=false): Include Pull Requests created by bots.</xbar.var>
-// <xbar.var>boolean(SHOW_DISCUSSIONS=true): Show GitHub Discussions.</xbar.var>
+// <xbar.var>boolean(SHOW_DISCUSSIONS=false): Show GitHub Discussions.</xbar.var>
 // <xbar.var>string(GITHUB_HOST=""): Your GitHub Enterprise Host. Leave blank for GitHub.com.</xbar.var>
 
 const config = {
@@ -397,9 +397,9 @@ const fetchDiscussions = async () => {
   const query = `
   query {
     viewer {
-      repositoriesContributedTo(first: 100, includeUserRepositories: true) {
+      repositoriesContributedTo(first: 10, includeUserRepositories: true) {
         nodes {
-          discussions(first: 10, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          discussions(first: 5, orderBy: {field: UPDATED_AT, direction: DESC}) {
             nodes {
               title
               url
